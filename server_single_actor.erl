@@ -30,12 +30,12 @@
 %%
 
 % Start server.
+%initialize() ->
+%    register(data_actor, spawn_link(?MODULE, data_actor, [[]])),
+%    ok.
 initialize() ->
-    register(data_actor, spawn_link(?MODULE, data_actor, [[]])),
-    ok.
-initialize_multi() ->
     % number of processes running data_actor func
-    DataActorCount = 2,
+    DataActorCount = 5,
     % register a list of atoms named from data_actor_1 to data_actor_X,
     % where X is defined by DataActorCount
     [ register(list_to_atom("data_actor_" ++ integer_to_list(X)), 
@@ -47,9 +47,16 @@ initialize_multi() ->
 % responsible for this user.
 -spec register_user() -> {integer(), pid()}.
 register_user() ->
-    %data_actor ! {self(), register_user},
-    data_actor_1 ! {self(), register_user},
-    %data_actor_2 ! {self(), register_user},
+    {_, DataActor_list} = get_data_actors(),
+    ChosenDataActor = random_choose_in_list(DataActor_list),
+    DataActor_list_others = DataActor_list -- [ChosenDataActor],
+    erlang:display("*********"),
+    erlang:display("Chosen:"),
+    erlang:display(ChosenDataActor),
+    erlang:display("rest:"),
+    erlang:display(DataActor_list_others),
+    whereis(ChosenDataActor) ! {self(), register_user},
+
     receive
         {registered_user, UserId, EntryPid} -> {UserId, EntryPid}
     end.
@@ -62,31 +69,19 @@ subscribe(EntryPid, UserId, UserIdToSubscribeTo) ->
         {EntryPid, subscribed, UserId, UserIdToSubscribeTo} -> ok
     end.
 
-% Get a list of atoms naming with "data_actor_" registered as data_actors
-get_data_actors() ->
-    lists:filter(fun(Aatom)->string:str(atom_to_list(Aatom),
-                                        "data_actor_")
-                             >=1 end, 
-                 registered()).
 
 
 % The data actor works like a small database and encapsulates all state of this
 % simple implementation.
 data_actor(Data) ->
-    % Get a list of atoms registered that running as data_actors
-    % DataActor_list = [list_to_atom("data_actor_" ++ 
-    %                                integer_to_list(X)) 
-    %                   || X<-lists:seq(1, 10)],
-
-    DataActor_list = get_data_actors(),
-    % Get the atom the current process is registered to, 
-    % remove from the above list
-    {registered_name, ThisName} = erlang:process_info(self(), registered_name),
-    DataActor_list_others = DataActor_list -- [ThisName],
-
     receive        
         {update, _Sender, register_user} ->
             {NewData, _NewUserId, _NewUserActor} = add_new_user(Data),
+            erlang:display("Update msg in name "),
+            {registered_name, _ThisName} = erlang:process_info(self(), registered_name),
+            erlang:display(_ThisName),
+            erlang:display("With new User id:"),
+            erlang:display(_NewUserId),
             % do not send any msg back
             data_actor(NewData);
 
@@ -101,10 +96,15 @@ data_actor(Data) ->
             data_actor(NewData);
 
         {Sender, register_user} ->
+            {_ThisName, DataActor_list_others} = get_data_actors(),
             % Forward this msg to other data_actors
-            [OtherActor ! {update, Sender, register_user} 
+            [whereis(OtherActor) ! {update, Sender, register_user} 
              || OtherActor<-DataActor_list_others],
             {NewData, NewUserId, NewUserActor} = add_new_user(Data),
+            erlang:display("Got msg in name "),
+            erlang:display(_ThisName),
+            erlang:display("With new User id:"),
+            erlang:display(NewUserId),
             Sender ! {registered_user, NewUserId, NewUserActor},
             data_actor(NewData);
             
@@ -119,16 +119,18 @@ data_actor(Data) ->
             data_actor(Data);
         
         {Sender, tweet,        UserId, Tweet} ->
+            {_ThisName, DataActor_list_others} = get_data_actors(),
             % Forward this msg to other data_actors
-            [OtherActor ! {update, Sender, tweet, UserId, Tweet} 
+            [whereis(OtherActor) ! {update, Sender, tweet, UserId, Tweet} 
              || OtherActor<-DataActor_list_others],
             {NewData, Timestamp} = tweet(Data, UserId, Tweet),
             Sender ! {self(), tweet_accepted, UserId, Timestamp},
             data_actor(NewData);
 
         {Sender, subscribe,    UserId, UserIdToSubscribeTo} ->
+            {_ThisName, DataActor_list_others} = get_data_actors(),
             % Forward this msg to other data_actors
-            [OtherActor ! {update, Sender, subscribe, UserId, UserIdToSubscribeTo} 
+            [whereis(OtherActor) ! {update, Sender, subscribe, UserId, UserIdToSubscribeTo} 
              || OtherActor<-DataActor_list_others],
             NewData = subscribe_to_user(Data, UserId, UserIdToSubscribeTo),
             Sender ! {self(), subscribed, UserId, UserIdToSubscribeTo},
@@ -138,9 +140,11 @@ data_actor(Data) ->
 % This simple implementation of the entry actor just delegates to the data
 % actor.
 entry_actor() ->
-    %TODO: only communicate with one of them
-    %DataActor = whereis(data_actor_1),
-    DataActor = whereis(data_actor_1),
+    % Since the current process won't be one of the data_actor processes,
+    % So the returned list is a full list of data_actors.
+    {_, DataActor_list} = get_data_actors(),
+    % Set DataActor as a pid value of a randomly selected data_actor.
+    DataActor = whereis(random_choose_in_list(DataActor_list)),
     receive
         % RequestType ::= tweets | timeline
         {Sender, RequestType, UserId, PageOrTweetOrUserId} -> 
@@ -197,7 +201,28 @@ subscribe_to_user(Data, UserId, UserIdToSubscribeTo) ->
 
     {UsersBefore, [_|UsersAfter]} = lists:split(UserId, Data),
     lists:append([UsersBefore, [NewUser | UsersAfter]]).
-    
+
+% Get a list of atoms naming with "data_actor_" registered as data_actors
+get_data_actors() ->
+    DataActor_list = lists:filter(fun(Aatom)->string:str(atom_to_list(Aatom),
+                                                         "data_actor_")
+                                              >=1 end, 
+                                  registered()),
+    % Get the atom the current process is registered to, 
+    % remove from the above list
+    case erlang:process_info(self(), registered_name) of
+        {registered_name, ThisName} -> {ThisName, DataActor_list--[ThisName]};
+        [] -> {none, DataActor_list}
+    end.
+
+
+% Choose randomly an element in a list.
+% This is used in entry_actor to randomly choose a data_actor to communicate.
+random_choose_in_list(AList) ->
+    Length = length(AList),
+    IndexChoice = random:uniform(Length),
+    lists:nth(IndexChoice, AList).
+
 
 %%
 %% Test Functions
@@ -206,17 +231,20 @@ subscribe_to_user(Data, UserId, UserIdToSubscribeTo) ->
 %% definition of the semantics of the provided interface but also make certain
 %% assumptions of its implementation. Thus, they need to be reused with care.
 %%
-initialization_test() ->
-    catch unregister(data_actor),
-    ?assertMatch(ok, initialize()).
+%initialization_test() ->
+%    catch unregister(data_actor),
+%    ?assertMatch(ok, initialize()).
 
-initialization_multi_test() ->
+initialization_test() ->
     catch unregister(data_actor_1),
     catch unregister(data_actor_2),
-    ?assertMatch(ok, initialize_multi()).
+    catch unregister(data_actor_3),
+    catch unregister(data_actor_4),
+    catch unregister(data_actor_5),
+    ?assertMatch(ok, initialize()).
 
 register_user_test() ->
-    initialization_multi_test(),
+    initialization_test(),
 
     % We assume here that everything is sequential, and we have simple
     % incremental ids
@@ -226,10 +254,12 @@ register_user_test() ->
     ?assertMatch({3, _Pid4}, register_user()).
 
 init_for_test() ->
-    %catch unregister(data_actor),
     catch unregister(data_actor_1),
     catch unregister(data_actor_2),
-    initialize_multi(),
+    catch unregister(data_actor_3),
+    catch unregister(data_actor_4),
+    catch unregister(data_actor_5),
+    initialize(),
     {0, Pid1} = register_user(),
     {1, Pid2} = register_user(),
     {2, Pid3} = register_user(),

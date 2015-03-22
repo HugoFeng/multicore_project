@@ -24,6 +24,7 @@
          data_actor/1,
          entry_actor/0]).
 
+
 %%
 %% API Functions
 %%
@@ -32,12 +33,23 @@
 initialize() ->
     register(data_actor, spawn_link(?MODULE, data_actor, [[]])),
     ok.
+initialize_multi() ->
+    % number of processes running data_actor func
+    DataActorCount = 2,
+    % register a list of atoms named from data_actor_1 to data_actor_X,
+    % where X is defined by DataActorCount
+    [ register(list_to_atom("data_actor_" ++ integer_to_list(X)), 
+              spawn_link(?MODULE, data_actor, [[]]))
+      || X <- lists:seq(1,DataActorCount) ],
+    ok.
 
 % Register a new user and return its id and the entry actor that is
 % responsible for this user.
 -spec register_user() -> {integer(), pid()}.
 register_user() ->
-    data_actor ! {self(), register_user},
+    %data_actor ! {self(), register_user},
+    data_actor_1 ! {self(), register_user},
+    %data_actor_2 ! {self(), register_user},
     receive
         {registered_user, UserId, EntryPid} -> {UserId, EntryPid}
     end.
@@ -50,38 +62,85 @@ subscribe(EntryPid, UserId, UserIdToSubscribeTo) ->
         {EntryPid, subscribed, UserId, UserIdToSubscribeTo} -> ok
     end.
 
+
 % The data actor works like a small database and encapsulates all state of this
 % simple implementation.
 data_actor(Data) ->
-    receive
+    % Get a list of atoms registered that running as data_actors
+    % DataActor_list = [list_to_atom("data_actor_" ++ 
+    %                                integer_to_list(X)) 
+    %                   || X<-lists:seq(1, 10)],
+
+    % TODO: maybe dynamically get a list of atoms registered, that
+    % conatain the keyword "data_actor_"
+    DataActor_list = lists:filter(fun(Aatom)->string:str(atom_to_list(Aatom),
+                                                         "data_actor_")
+                                              >=1 end, 
+                                  registered()),
+    % Get the atom the current process is registered to, 
+    % remove from the above list
+    {registered_name, ThisName} = erlang:process_info(self(), registered_name),
+    DataActor_list_others = DataActor_list -- [ThisName],
+
+    receive        
+        {update, _Sender, register_user} ->
+            {NewData, _NewUserId, _NewUserActor} = add_new_user(Data),
+            % do not send any msg back
+            data_actor(NewData);
+
+        {update, _Sender, tweet,        UserId, Tweet} ->
+            {NewData, _Timestamp} = tweet(Data, UserId, Tweet),
+            % do not send any msg back
+            data_actor(NewData);
+
+        {update, _Sender, subscribe,    UserId, UserIdToSubscribeTo} ->
+            NewData = subscribe_to_user(Data, UserId, UserIdToSubscribeTo),
+            % do not send any msg back
+            data_actor(NewData);
+
         {Sender, register_user} ->
+            % Forward this msg to other data_actors
+            [OtherActor ! {update, Sender, register_user} 
+             || OtherActor<-DataActor_list_others],
             {NewData, NewUserId, NewUserActor} = add_new_user(Data),
             Sender ! {registered_user, NewUserId, NewUserActor},
             data_actor(NewData);
             
         {Sender, get_timeline, UserId, Page} ->
+            % Since this is not updating the data, do not forward msg
             Sender ! {self(), timeline, UserId, Page, timeline(Data, UserId, Page)},
             data_actor(Data);
             
         {Sender, get_tweets,   UserId, Page} ->
+            % Since this is not updating the data, do not forward msg
             Sender ! {self(), tweets,   UserId, Page, tweets(Data, UserId, Page)},
             data_actor(Data);
         
         {Sender, tweet,        UserId, Tweet} ->
+            % Forward this msg to other data_actors
+            [OtherActor ! {update, Sender, tweet, UserId, Tweet} 
+             || OtherActor<-DataActor_list_others],
             {NewData, Timestamp} = tweet(Data, UserId, Tweet),
             Sender ! {self(), tweet_accepted, UserId, Timestamp},
             data_actor(NewData);
-        
+
         {Sender, subscribe,    UserId, UserIdToSubscribeTo} ->
+            % Forward this msg to other data_actors
+            [OtherActor ! {update, Sender, subscribe, UserId, UserIdToSubscribeTo} 
+             || OtherActor<-DataActor_list_others],
             NewData = subscribe_to_user(Data, UserId, UserIdToSubscribeTo),
             Sender ! {self(), subscribed, UserId, UserIdToSubscribeTo},
             data_actor(NewData)
+
+
     end.
 
 % This simple implementation of the entry actor just delegates to the data
 % actor.
 entry_actor() ->
-    DataActor = whereis(data_actor),
+    %TODO: only communicate with one of them
+    %DataActor = whereis(data_actor_1),
+    DataActor = whereis(data_actor_1),
     receive
         % RequestType ::= tweets | timeline
         {Sender, RequestType, UserId, PageOrTweetOrUserId} -> 
@@ -151,8 +210,13 @@ initialization_test() ->
     catch unregister(data_actor),
     ?assertMatch(ok, initialize()).
 
+initialization_multi_test() ->
+    catch unregister(data_actor_1),
+    catch unregister(data_actor_2),
+    ?assertMatch(ok, initialize_multi()).
+
 register_user_test() ->
-    initialization_test(),
+    initialization_multi_test(),
 
     % We assume here that everything is sequential, and we have simple
     % incremental ids
@@ -162,8 +226,10 @@ register_user_test() ->
     ?assertMatch({3, _Pid4}, register_user()).
 
 init_for_test() ->
-    catch unregister(data_actor),
-    initialize(),
+    %catch unregister(data_actor),
+    catch unregister(data_actor_1),
+    catch unregister(data_actor_2),
+    initialize_multi(),
     {0, Pid1} = register_user(),
     {1, Pid2} = register_user(),
     {2, Pid3} = register_user(),

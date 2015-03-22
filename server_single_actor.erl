@@ -14,6 +14,11 @@
 -include_lib("eunit/include/eunit.hrl").
 
 %%
+%% Macro setting
+%%
+-define(NUM_OF_DATA_ACTORS, 10).
+
+%%
 %% Exported Functions
 %%
 -export([initialize/0,
@@ -30,17 +35,12 @@
 %%
 
 % Start server.
-%initialize() ->
-%    register(data_actor, spawn_link(?MODULE, data_actor, [[]])),
-%    ok.
 initialize() ->
-    % number of processes running data_actor func
-    DataActorCount = 5,
     % register a list of atoms named from data_actor_1 to data_actor_X,
     % where X is defined by DataActorCount
     [ register(list_to_atom("data_actor_" ++ integer_to_list(X)), 
               spawn_link(?MODULE, data_actor, [[]]))
-      || X <- lists:seq(1,DataActorCount) ],
+      || X <- lists:seq(1, ?NUM_OF_DATA_ACTORS) ],
     ok.
 
 % Register a new user and return its id and the entry actor that is
@@ -223,6 +223,16 @@ random_choose_in_list(AList) ->
     IndexChoice = random:uniform(Length),
     lists:nth(IndexChoice, AList).
 
+% Unregister all data_actor atoms
+unregister_data_actors() ->
+    case get_data_actors() of
+        {none, DataActors} -> [catch unregister(A_actor)
+                               || A_actor <- DataActors];
+        {ThisName, Other_DataActors} -> [catch unregister(A_actor) 
+                                         || A_actor <- Other_DataActors],
+                                        catch unregister(ThisName)
+    end.
+
 
 %%
 %% Test Functions
@@ -236,11 +246,7 @@ random_choose_in_list(AList) ->
 %    ?assertMatch(ok, initialize()).
 
 initialization_test() ->
-    catch unregister(data_actor_1),
-    catch unregister(data_actor_2),
-    catch unregister(data_actor_3),
-    catch unregister(data_actor_4),
-    catch unregister(data_actor_5),
+    unregister_data_actors(),
     ?assertMatch(ok, initialize()).
 
 register_user_test() ->
@@ -254,11 +260,7 @@ register_user_test() ->
     ?assertMatch({3, _Pid4}, register_user()).
 
 init_for_test() ->
-    catch unregister(data_actor_1),
-    catch unregister(data_actor_2),
-    catch unregister(data_actor_3),
-    catch unregister(data_actor_4),
-    catch unregister(data_actor_5),
+    unregister_data_actors(),
     initialize(),
     {0, Pid1} = register_user(),
     {1, Pid2} = register_user(),

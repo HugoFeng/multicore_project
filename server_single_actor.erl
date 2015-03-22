@@ -62,6 +62,13 @@ subscribe(EntryPid, UserId, UserIdToSubscribeTo) ->
         {EntryPid, subscribed, UserId, UserIdToSubscribeTo} -> ok
     end.
 
+% Get a list of atoms naming with "data_actor_" registered as data_actors
+get_data_actors() ->
+    lists:filter(fun(Aatom)->string:str(atom_to_list(Aatom),
+                                        "data_actor_")
+                             >=1 end, 
+                 registered()).
+
 
 % The data actor works like a small database and encapsulates all state of this
 % simple implementation.
@@ -71,12 +78,7 @@ data_actor(Data) ->
     %                                integer_to_list(X)) 
     %                   || X<-lists:seq(1, 10)],
 
-    % TODO: maybe dynamically get a list of atoms registered, that
-    % conatain the keyword "data_actor_"
-    DataActor_list = lists:filter(fun(Aatom)->string:str(atom_to_list(Aatom),
-                                                         "data_actor_")
-                                              >=1 end, 
-                                  registered()),
+    DataActor_list = get_data_actors(),
     % Get the atom the current process is registered to, 
     % remove from the above list
     {registered_name, ThisName} = erlang:process_info(self(), registered_name),
@@ -131,8 +133,6 @@ data_actor(Data) ->
             NewData = subscribe_to_user(Data, UserId, UserIdToSubscribeTo),
             Sender ! {self(), subscribed, UserId, UserIdToSubscribeTo},
             data_actor(NewData)
-
-
     end.
 
 % This simple implementation of the entry actor just delegates to the data

@@ -49,12 +49,6 @@ initialize() ->
 register_user() ->
     {_, DataActor_list} = get_data_actors(),
     ChosenDataActor = random_choose_in_list(DataActor_list),
-    DataActor_list_others = DataActor_list -- [ChosenDataActor],
-    erlang:display("*********"),
-    erlang:display("Chosen:"),
-    erlang:display(ChosenDataActor),
-    erlang:display("rest:"),
-    erlang:display(DataActor_list_others),
     whereis(ChosenDataActor) ! {self(), register_user},
 
     receive
@@ -77,11 +71,7 @@ data_actor(Data) ->
     receive        
         {update, _Sender, register_user} ->
             {NewData, _NewUserId, _NewUserActor} = add_new_user(Data),
-            erlang:display("Update msg in name "),
             {registered_name, _ThisName} = erlang:process_info(self(), registered_name),
-            erlang:display(_ThisName),
-            erlang:display("With new User id:"),
-            erlang:display(_NewUserId),
             % do not send any msg back
             data_actor(NewData);
 
@@ -101,10 +91,6 @@ data_actor(Data) ->
             [whereis(OtherActor) ! {update, Sender, register_user} 
              || OtherActor<-DataActor_list_others],
             {NewData, NewUserId, NewUserActor} = add_new_user(Data),
-            erlang:display("Got msg in name "),
-            erlang:display(_ThisName),
-            erlang:display("With new User id:"),
-            erlang:display(NewUserId),
             Sender ! {registered_user, NewUserId, NewUserActor},
             data_actor(NewData);
             

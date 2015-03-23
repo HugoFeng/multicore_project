@@ -70,8 +70,7 @@ subscribe(EntryPid, UserId, UserIdToSubscribeTo) ->
 data_actor(Data) ->
     receive        
         {update, _Sender, register_user} ->
-            {NewData, _NewUserId, _NewUserActor} = add_new_user(Data),
-            {registered_name, _ThisName} = erlang:process_info(self(), registered_name),
+            {NewData, _NewUserId} = add_new_user({update, Data}),
             % do not send any msg back
             data_actor(NewData);
 
@@ -90,7 +89,7 @@ data_actor(Data) ->
             % Forward this msg to other data_actors
             [whereis(OtherActor) ! {update, Sender, register_user} 
              || OtherActor<-DataActor_list_others],
-            {NewData, NewUserId, NewUserActor} = add_new_user(Data),
+            {NewData, NewUserId, NewUserActor} = add_new_user({Data}),
             Sender ! {registered_user, NewUserId, NewUserActor},
             data_actor(NewData);
             
@@ -150,7 +149,14 @@ entry_actor() ->
 %%
 %% Internal Functions
 %%
-add_new_user(Data) ->
+
+% Update new user, do not need to spawn an entry_actor
+add_new_user({update, Data}) ->
+    NewUserId = length(Data),
+    NewData = Data ++ [{user, NewUserId, [], sets:new()}],
+    {NewData, NewUserId};
+% Create new user, and spawn a new entry_actor
+add_new_user({Data}) ->
     NewUserId = length(Data),
     NewData = Data ++ [{user, NewUserId, [], sets:new()}],
     NewUserActor = spawn_link(?MODULE, entry_actor, []),
